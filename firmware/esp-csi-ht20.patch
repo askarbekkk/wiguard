@@ -1,0 +1,34 @@
+diff --git a/examples/get-started/csi_recv/main/app_main.c b/examples/get-started/csi_recv/main/app_main.c
+index 4932cd2..cd9e9fd 100644
+--- a/examples/get-started/csi_recv/main/app_main.c
++++ b/examples/get-started/csi_recv/main/app_main.c
+@@ -34,10 +34,10 @@
+ #define CONFIG_WIFI_2G_PROTOCOL             WIFI_PROTOCOL_11N
+ #define CONFIG_WIFI_5G_PROTOCOL             WIFI_PROTOCOL_11N
+ #else
+-#define CONFIG_WIFI_BANDWIDTH           WIFI_BW_HT40
++#define CONFIG_WIFI_BANDWIDTH           WIFI_BW_HT20
+ #endif
+ 
+-#define CONFIG_ESP_NOW_PHYMODE           WIFI_PHY_MODE_HT40
++#define CONFIG_ESP_NOW_PHYMODE           WIFI_PHY_MODE_HT20
+ #define CONFIG_ESP_NOW_RATE             WIFI_PHY_RATE_MCS0_LGI
+ #define CONFIG_FORCE_GAIN                   0
+ 
+diff --git a/examples/get-started/csi_send/main/app_main.c b/examples/get-started/csi_send/main/app_main.c
+index e26ee5b..ec3c75e 100644
+--- a/examples/get-started/csi_send/main/app_main.c
++++ b/examples/get-started/csi_send/main/app_main.c
+@@ -33,10 +33,10 @@
+ #define CONFIG_WIFI_2G_PROTOCOL             WIFI_PROTOCOL_11N
+ #define CONFIG_WIFI_5G_PROTOCOL             WIFI_PROTOCOL_11N
+ #else
+-#define CONFIG_WIFI_BANDWIDTH           WIFI_BW_HT40
++#define CONFIG_WIFI_BANDWIDTH           WIFI_BW_HT20
+ #endif
+ 
+-#define CONFIG_ESP_NOW_PHYMODE           WIFI_PHY_MODE_HT40
++#define CONFIG_ESP_NOW_PHYMODE           WIFI_PHY_MODE_HT20
+ #define CONFIG_ESP_NOW_RATE             WIFI_PHY_RATE_MCS0_LGI
+ #define CONFIG_SEND_FREQUENCY               100
+ 

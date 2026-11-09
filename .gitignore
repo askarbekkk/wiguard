@@ -1,0 +1,12 @@
+# recordings and plots (may contain video of people)
+data/
+plots/
+*.mp4
+# local copy of esp-csi (see firmware/esp-csi-ht20.patch)
+esp-csi/
+# build output
+__pycache__/
+firmware/*/build/
+firmware/*/sdkconfig
+firmware/*/sdkconfig.old
+firmware/*/dependencies.lock

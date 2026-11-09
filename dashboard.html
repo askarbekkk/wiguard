@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WiGuard Live</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; }
+  button { font: inherit; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); cursor: pointer; }
+  #status { margin: 14px 0; padding: 22px; border-radius: 12px; color: #fff; font-size: 32px; font-weight: 700; text-align: center; transition: background .3s; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .card h2 { font-size: 14px; margin: 0 0 4px; }
+  .card p { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
+  canvas { width: 100%; height: 170px; display: block; }
+  .facts { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; color: var(--muted); }
+  .facts b { color: var(--text); }
+  #events { margin: 0; padding: 0; list-style: none; max-height: 170px; overflow-y: auto; }
+  #events li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>WiGuard — live room monitor</h1>
+    <button id="calibrate">Calibrate empty room (20 s)</button>
+  </header>
+  <div id="status" style="background:#9aa1ad">Waiting for data…</div>
+  <div class="grid">
+    <div class="card"><h2>WiFi: movement</h2><p>How much the signal changes. Dashed = threshold from calibration.</p><canvas id="motion"></canvas></div>
+    <div class="card"><h2>WiFi: fingerprint vs empty room</h2><p>How different the room looks from when it was empty. Dashed = 2× empty level.</p><canvas id="fp"></canvas></div>
+    <div class="card"><h2>Radar: energy</h2><p><span style="color:#e8590c">moving</span> / <span style="color:#1971c2">still</span> target strength (0–100)</p><canvas id="radar"></canvas></div>
+    <div class="card"><h2>Events</h2><p>When someone entered or left the room (radar)</p><ul id="events"></ul></div>
+  </div>
+  <div class="facts" id="facts"></div>
+</main>
+<script>
+const WINDOW = 60;
+const RADAR_STATES = ["nobody", "moving", "still", "moving + still"];
+
+function chart(id, series, ymax, guide) {
+  const c = document.getElementById(id), r = devicePixelRatio || 1;
+  c.width = c.clientWidth * r; c.height = c.clientHeight * r;
+  const g = c.getContext("2d"), w = c.width, h = c.height, now = Date.now() / 1000;
+  g.clearRect(0, 0, w, h);
+  g.strokeStyle = "#e3e6ec"; g.lineWidth = r;
+  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(0, h * i / 4); g.lineTo(w, h * i / 4); g.stroke(); }
+  const x = t => w * (1 - (now - t) / WINDOW), y = v => h - h * Math.min(v / ymax, 1);
+  if (guide != null) {
+    g.setLineDash([6 * r, 4 * r]); g.strokeStyle = "#868e96";
+    g.beginPath(); g.moveTo(0, y(guide)); g.lineTo(w, y(guide)); g.stroke(); g.setLineDash([]);
+  }
+  for (const s of series) {
+    g.strokeStyle = s.color; g.lineWidth = 2.5 * r; g.beginPath();
+    let started = false;
+    for (const [t, v] of s.points) {
+      if (v == null) { started = false; continue; }
+      started ? g.lineTo(x(t), y(v)) : g.moveTo(x(t), y(v)); started = true;
+    }
+    g.stroke();
+  }
+}
+
+function setStatus(text, color) {
+  const el = document.getElementById("status");
+  el.textContent = text; el.style.background = color;
+}
+
+async function tick() {
+  let d;
+  try { d = await (await fetch("/data")).json(); } catch { return setStatus("Dashboard server stopped", "#9aa1ad"); }
+  const csi = d.csi.filter(p => d.now - p[0] < WINDOW), rad = d.radar.filter(p => d.now - p[0] < WINDOW);
+  const motionMax = Math.max(0.06, (d.threshold || 0) * 3);
+  chart("motion", [{ color: "#2f9e44", points: csi.map(p => [p[0], p[1]]) }], motionMax, d.threshold);
+  const fpGuide = d.fp_base ? 2 * d.fp_base : null;
+  chart("fp", [{ color: "#9c36b5", points: csi.map(p => [p[0], p[2]]) }], Math.max(15, (fpGuide || 0) * 3), fpGuide);
+  chart("radar", [{ color: "#e8590c", points: rad.map(p => [p[0], p[3]]) },
+                  { color: "#1971c2", points: rad.map(p => [p[0], p[5]]) }], 100);
+
+  const c = csi.length && d.now - csi[csi.length - 1][0] < 2 ? csi[csi.length - 1] : null;
+  const r = rad.length && d.now - rad[rad.length - 1][0] < 2 ? rad[rad.length - 1] : null;
+  const csiMoving = c && d.threshold && c[1] > d.threshold;
+  const radarMoving = r && (r[1] === 1 || r[1] === 3);
+  const present = r ? r[1] !== 0 : null;
+  const onFloor = c && c[2] != null && fpGuide && c[2] > fpGuide;
+
+  const clock = t => new Date(t * 1000).toLocaleTimeString();
+  const last = d.events[d.events.length - 1];
+  document.getElementById("events").innerHTML = d.events.slice().reverse()
+    .map(([t, e]) => `<li>${clock(t)} — ${e === "left" ? "🚪 left the room" : "🚶 entered the room"}</li>`).join("")
+    || "<li>No events yet</li>";
+
+  if (d.calibrating) setStatus("Calibrating — please leave the room", "#868e96");
+  else if (last && last[1] === "left" && present === false) setStatus(`Room empty — left at ${clock(last[0])}`, "#2f9e44");
+  else if (!c && !r) setStatus("No data from the boards", "#9aa1ad");
+  else if (csiMoving || radarMoving) setStatus("Movement", "#e8590c");
+  else if (onFloor) setStatus("Person on the floor?", "#e03131");
+  else if (present) setStatus("Person present, not moving", "#1971c2");
+  else if (present === false) setStatus("Room empty", "#2f9e44");
+  else setStatus("Quiet", "#2f9e44");
+
+  document.getElementById("facts").innerHTML = [
+    c ? `WiFi motion <b>${c[1].toFixed(3)}</b>` : "WiFi: no data",
+    d.threshold ? `threshold <b>${d.threshold.toFixed(3)}</b>` : "not calibrated",
+    c && c[2] != null ? `fingerprint <b>${c[2].toFixed(1)}</b>` : "",
+    r ? `radar <b>${RADAR_STATES[r[1]] ?? r[1]}</b>, moving ${r[2]} cm, still ${r[4]} cm` : "radar: no data",
+  ].filter(Boolean).map(s => `<span>${s}</span>`).join("");
+}
+
+document.getElementById("calibrate").onclick = () => fetch("/calibrate", { method: "POST" });
+setInterval(tick, 500);
+tick();
+</script>
+</body>
+</html>
