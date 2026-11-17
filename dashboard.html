@@ -34,7 +34,7 @@
     <div class="card"><h2>WiFi: movement</h2><p>How much the signal changes. Dashed = threshold from calibration.</p><canvas id="motion"></canvas></div>
     <div class="card"><h2>WiFi: fingerprint vs empty room</h2><p>How different the room looks from when it was empty. Dashed = 2× empty level.</p><canvas id="fp"></canvas></div>
     <div class="card"><h2>Radar: energy</h2><p><span style="color:#e8590c">moving</span> / <span style="color:#1971c2">still</span> target strength (0–100)</p><canvas id="radar"></canvas></div>
-    <div class="card"><h2>Events</h2><p>When someone entered or left the room (radar)</p><ul id="events"></ul></div>
+    <div class="card"><h2>Events</h2><p>Entered / left the room (radar), fall and inactivity alarms</p><ul id="events"></ul></div>
   </div>
   <div class="facts" id="facts"></div>
 </main>
@@ -84,21 +84,22 @@ async function tick() {
   const c = csi.length && d.now - csi[csi.length - 1][0] < 2 ? csi[csi.length - 1] : null;
   const r = rad.length && d.now - rad[rad.length - 1][0] < 2 ? rad[rad.length - 1] : null;
   const csiMoving = c && d.threshold && c[1] > d.threshold;
-  const radarMoving = r && (r[1] === 1 || r[1] === 3);
   const present = r ? r[1] !== 0 : null;
-  const onFloor = c && c[2] != null && fpGuide && c[2] > fpGuide;
+  const a = d.alarm || {};
 
   const clock = t => new Date(t * 1000).toLocaleTimeString();
   const last = d.events[d.events.length - 1];
   document.getElementById("events").innerHTML = d.events.slice().reverse()
-    .map(([t, e]) => `<li>${clock(t)} — ${e === "left" ? "🚪 left the room" : "🚶 entered the room"}</li>`).join("")
+    .map(([t, e]) => `<li>${clock(t)} — ${{ left: "🚪 left the room", entered: "🚶 entered the room" }[e]
+      || (e.startsWith("ALERT") ? `🚨 <b>${e}</b>` : e.startsWith("countdown") ? `⏳ ${e}` : `✅ ${e}`)}</li>`).join("")
     || "<li>No events yet</li>";
 
   if (d.calibrating) setStatus("Calibrating — please leave the room", "#868e96");
   else if (last && last[1] === "left" && present === false) setStatus(`Room empty — left at ${clock(last[0])}`, "#2f9e44");
+  else if (a.state === "alert") setStatus("ALERT — person not moving, notifying family", "#c92a2a");
+  else if (a.state === "countdown") setStatus(`No movement — alert in ${Math.max(0, Math.ceil(a.until - d.now))} s (move to cancel)`, "#e03131");
   else if (!c && !r) setStatus("No data from the boards", "#9aa1ad");
-  else if (csiMoving || radarMoving) setStatus("Movement", "#e8590c");
-  else if (onFloor) setStatus("Person on the floor?", "#e03131");
+  else if (csiMoving) setStatus("Movement", "#e8590c");
   else if (present) setStatus("Person present, not moving", "#1971c2");
   else if (present === false) setStatus("Room empty", "#2f9e44");
   else setStatus("Quiet", "#2f9e44");

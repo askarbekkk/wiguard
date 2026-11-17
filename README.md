@@ -4,7 +4,7 @@ Low-cost, open-source monitoring for older people who live alone in small rooms 
 
 **Hardware cost: about ₩45,000** (3× ESP32 DevKitC ≈ ₩30,000 + LD2410C radar ≈ ₩14,000).
 
-> Status: working prototype. Motion, presence and "left the room" detection work; fall detection is in progress (see [Results](#results) and [Limitations](#limitations)).
+> Status: working prototype. Motion, presence, "left the room" and a "person is not getting up" alarm work; the Telegram alert is in progress (see [Results](#results) and [Limitations](#limitations)).
 
 ## Why
 
@@ -26,7 +26,9 @@ Low-cost, open-source monitoring for older people who live alone in small rooms 
    - **Motion** — how much the subcarrier pattern changes from moment to moment (detects walking, sitting down, getting up).
    - **Fingerprint** — how different the current pattern is from a calibrated *empty room*. This keeps information about a person who is *not* moving, which a motion-only pipeline throws away.
 4. **Radar.** The LD2410C reports whether a target is moving or still and at what distance (up to ~6 m), including people who are only breathing.
-5. **Decisions.** A short empty-room calibration sets the thresholds for each room. The radar drives *entered / left the room* events; WiFi motion and the fingerprint drive *movement* and *possible person on the floor*.
+5. **Decisions.** A short empty-room calibration sets the WiFi threshold for each room. The radar (limited to the room's size, `--max-cm`) drives *entered / left the room*. **Alarm:** if the radar sees someone in the room and WiFi sees no movement for `--still` seconds, a 15-second countdown starts (audible ticks, cancelled by any movement), then an alert with a siren.
+
+Why "not getting up" instead of recognising the fall itself: on the public [WiFall](https://huggingface.co/datasets/RS2002/WiFall) dataset (10 people, ESP32-S3), seven classifiers tested on a person they never saw tell a fall from walking or jumping reasonably well (SVM: 91% of falls caught, 19% false alarms), but a fall from **sitting down** poorly (best: logistic regression with amplitude + phase, 84% caught, 35% false alarms). For WiFi both are "the body goes down quickly and stops". What separates them is whether the person moves again afterwards.
 
 ## Results
 
@@ -37,9 +39,11 @@ Measured on the prototype in one room (2 boards ~1.5 m apart, HT20, onboard PCB 
 | Empty room, door closed, 60 s | WiFi motion 0.016–0.029, no false spikes, no packet loss |
 | Standing still vs walking near the boards | walking is **2–4× higher** than standing still |
 | Recorded session (still / walk / sit / lie phases) | motion: walk 0.038 vs still 0.011–0.019 |
-| Fingerprint vs empty room, same session | empty 4.2 (2.5–4.7), standing 4.2, sitting 3.7, **lying on the floor 10.4 (10.1–11.3)**, no overlap with empty |
-| Radar presence | detects moving and still people up to ~6 m |
+| Fingerprint vs empty room | one session: lying on the floor 10.4 vs empty 4.2; **a second session: floor 3.5, empty 5.3, standing 16–19**. It depends on where the person is, not on posture, so it is not used for decisions |
+| Radar presence | detects moving and still people, including a person lying on the floor (still energy 100) |
+| Radar in an empty room, factory settings | "still person" 48% of the time (a person ~10 m away behind the wall, plus noise); **0% after limiting the range to 4.5 m** |
 | "Left the room" event | reported ~15 s after the person leaves |
+| Alarm test (lie down and stay still) | countdown 30 s after the last movement, alert at 45 s, cancelled as soon as the person moved |
 
 ![Signal variability while standing still and then walking](docs/still_vs_walking.png)
 
@@ -48,8 +52,9 @@ The fingerprint result comes from **one session** with the reference recorded mi
 ## Limitations
 
 - **Weak signal.** The onboard PCB antennas give −72 to −82 dBm at 1.5 m. Motion close to the boards is clear; motion in the middle of a 1.5 m link is much weaker. Espressif recommends external antennas.
-- **WiFi motion alone cannot see a person lying still** (it looks like an empty room). That is why the fingerprint and the radar exist.
-- **The radar needs tuning.** With factory settings it reports "moving" for a person who is only breathing nearby.
+- **WiFi motion alone cannot see a person lying still** (it looks like an empty room). That is why the radar is there.
+- **The moment of the fall is not recognised**, only that the person does not get up. A person resting very still also triggers the countdown, so the `--still` time must be set per home (minutes, not the 30 s demo value).
+- **The radar sees through walls.** Its range must be limited to the room, ideally with the radar in the middle of a long wall. With factory settings it also reports "moving" for a person who is only breathing; `radar_gates.py` measures the empty-room noise per 0.75 m gate and can raise the thresholds.
 - **Sensitivity beyond the room.** With the door open, movement outside the room is picked up. Boards should be placed away from doors and shared walls.
 - One room, one person. Not tested with pets, several occupants or a running shower yet.
 - **Fall detection is not validated yet**, and this is not a medical device.
@@ -80,29 +85,30 @@ Radar wiring (bridge board): `VCC → VIN`, `GND → GND`, `TX → D16`, `RX →
 4. Python side: `pip install -r requirements.txt`
 5. Run the dashboard and open http://localhost:8000:
    ```
-   python dashboard.py --csi COMy --radar COMz
+   python dashboard.py --csi COMy --radar COMz --max-cm 450 --still 30
    ```
-   Press **Calibrate empty room** and leave the room for 20 seconds.
+   Press **Calibrate empty room** and leave the room for 20 seconds. `--max-cm` = how far the room reaches from the radar, `--still` = seconds without movement before the countdown.
 
 ## Files
 
 | File | What it does |
 |---|---|
-| `dashboard.py`, `dashboard.html` | live web dashboard: WiFi motion, fingerprint, radar energy, entered/left events; saves everything to `data/live/` |
+| `dashboard.py`, `dashboard.html` | live web dashboard: WiFi motion, fingerprint, radar energy, entered/left events, "not getting up" alarm with sound; saves everything to `data/live/` |
 | `csi.py` | reads esp-csi CSV logs, computes amplitudes and the motion measure |
 | `radar.py` | parses LD2410C report frames |
+| `radar_gates.py` | empty-room radar calibration: noise per distance gate, optional new thresholds |
 | `record.py` | records raw CSI to CSV with start/stop beeps |
-| `session.py` | records CSI and webcam video together with timed phases (used only to label training data, never in deployment) |
+| `session.py` | records CSI and webcam video together with timed phases, or video only next to the dashboard (used only to label test data, never in deployment) |
 | `live.py` | simple live motion plot with empty-room calibration |
 | `camera_preview.py` | webcam preview for placing the labelling camera |
-| `firmware/radar_bridge` | ESP-IDF firmware that forwards the radar's UART to USB |
+| `firmware/radar_bridge` | ESP-IDF firmware that forwards the radar's UART to USB and back (for config commands) |
 | `firmware/esp-csi-ht20.patch` | switches the esp-csi examples from HT40 to HT20 |
 
 ## Roadmap
 
-- Repeat the fingerprint test on different days and floor positions; tune the radar's motion sensitivity.
-- Fall rule: sudden motion spike → stillness → person still present (radar) and on the floor (fingerprint) → countdown with cancel → Telegram alert.
-- Label sessions with the synchronized camera and report missed falls, false alarms per hour and time to alert on held-out sessions.
+- Telegram alert to family or a caseworker.
+- Record falls, sitting down and walking in our own room with the camera; report missed falls, false alarms per hour and time to alert.
+- Use a classifier (amplitude + phase) as a hint that shortens the countdown after a likely fall.
 - Run on the ESP32 or a Raspberry Pi instead of a laptop.
 
 ## Related work

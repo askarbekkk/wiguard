@@ -1,12 +1,12 @@
 """Live webcam preview for positioning the camera. Close the window or press Q to stop.
 
-    python camera_preview.py 1
+    python camera_preview.py 0
 """
 import sys
 
 import cv2
 
-cap = cv2.VideoCapture(int(sys.argv[1]) if len(sys.argv) > 1 else 1)
+cap = cv2.VideoCapture(int(sys.argv[1]) if len(sys.argv) > 1 else 0)
 cv2.namedWindow("camera", cv2.WINDOW_NORMAL)
 cv2.setWindowProperty("camera", cv2.WND_PROP_TOPMOST, 1)
 while True:

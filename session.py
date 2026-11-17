@@ -16,16 +16,23 @@ import serial
 from record import HEADER
 
 PORT = sys.argv[2] if len(sys.argv) > 2 else "COM6"  # the COM number changes with the USB socket
-CAMERA = 1
+CAMERA = 0  # USB webcam; the laptop camera is 1 (the order can change after replugging)
 PHASES = [  # (seconds, label) — edit for each session
-    (20, "empty"),
-    (30, "stand"),
+    (10, "go_out"),
+    (25, "empty"),
     (30, "walk"),
-    (30, "sit"),
-    (30, "lie"),
-    (20, "leave"),
+    (30, "stand"),
+    (30, "sit_chair"),
+    (30, "sit_floor"),
+    (40, "lie"),
+    (20, "get_up"),
+    (40, "fall"),
+    (20, "get_up"),
+    (25, "leave"),
 ]
 
+if len(sys.argv) > 3:  # python session.py s06 none 300 -> one free-form phase, labels come from the video
+    PHASES = [(int(sys.argv[3]), "free")]
 name = sys.argv[1]
 out = f"data/sessions/{name}"
 os.makedirs(out, exist_ok=True)
@@ -56,7 +63,8 @@ video = cv2.VideoWriter(f"{out}/video.mp4", cv2.VideoWriter_fourcc(*"mp4v"), 30,
 times = open(f"{out}/video_times.csv", "w")
 phases = open(f"{out}/phases.csv", "w")
 phases.write("label,start,end\n")
-threading.Thread(target=read_csi, daemon=True).start()
+if PORT != "none":  # "none": the dashboard already logs CSI and radar, record only video + phases
+    threading.Thread(target=read_csi, daemon=True).start()
 
 print("Phases:", ", ".join(f"{label} {sec}s" for sec, label in PHASES), flush=True)
 start = time.time()
@@ -64,7 +72,7 @@ ends = [start + sum(sec for sec, _ in PHASES[:i + 1]) for i in range(len(PHASES)
 phase = 0
 beep()
 last_count, last_check, rate = 0, start, 0
-while phase < len(PHASES):
+while phase < len(PHASES) and not os.path.exists(f"{out}/stop"):  # touch <out>/stop to end early; killing it loses the mp4
     ok, frame = cap.read()
     now = time.time()
     if now >= ends[phase]:
@@ -74,7 +82,7 @@ while phase < len(PHASES):
         continue
     if now - last_check >= 1:
         rate, last_count, last_check = csi_count - last_count, csi_count, now
-        if rate == 0:
+        if rate == 0 and PORT != "none":
             print(f"WARNING: no CSI at {now - start:.0f}s — check the receiver cable and TX power", flush=True)
     if ok:
         label = PHASES[phase][1]

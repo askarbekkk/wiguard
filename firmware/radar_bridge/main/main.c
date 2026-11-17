@@ -1,5 +1,5 @@
-// Forwards the LD2410C radar's UART (256000 baud on GPIO16/17) to the USB serial port unchanged.
-// The laptop parses the radar frames (radar.py).
+// Forwards the LD2410C radar's UART (256000 baud on GPIO16/17) to the USB serial port unchanged, both ways.
+// The laptop parses the radar frames and sends config commands (radar.py).
 #include "driver/uart.h"
 
 #define RADAR_UART UART_NUM_2
@@ -27,6 +27,10 @@ void app_main(void)
         int n = uart_read_bytes(RADAR_UART, buf, sizeof(buf), pdMS_TO_TICKS(20));
         if (n > 0) {
             uart_write_bytes(UART_NUM_0, buf, n);
+        }
+        n = uart_read_bytes(UART_NUM_0, buf, sizeof(buf), 0);  // laptop -> radar: config commands
+        if (n > 0) {
+            uart_write_bytes(RADAR_UART, buf, n);
         }
     }
 }
