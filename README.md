@@ -4,7 +4,7 @@ Low-cost, open-source monitoring for older people who live alone in small rooms 
 
 **Hardware cost: about ₩45,000** (3× ESP32 DevKitC ≈ ₩30,000 + LD2410C radar ≈ ₩14,000).
 
-> Status: working prototype. Motion, presence, "left the room" and a "person is not getting up" alarm work; the Telegram alert is in progress (see [Results](#results) and [Limitations](#limitations)).
+> Status: working prototype. Motion, presence, "left the room" and a "person is not getting up" alarm with a Telegram message work (see [Results](#results) and [Limitations](#limitations)).
 
 ## Why
 
@@ -26,7 +26,7 @@ Low-cost, open-source monitoring for older people who live alone in small rooms 
    - **Motion** — how much the subcarrier pattern changes from moment to moment (detects walking, sitting down, getting up).
    - **Fingerprint** — how different the current pattern is from a calibrated *empty room*. This keeps information about a person who is *not* moving, which a motion-only pipeline throws away.
 4. **Radar.** The LD2410C reports whether a target is moving or still and at what distance (up to ~6 m), including people who are only breathing.
-5. **Decisions.** A short empty-room calibration sets the WiFi threshold for each room. The radar (limited to the room's size, `--max-cm`) drives *entered / left the room*. **Alarm:** if the radar sees someone in the room and WiFi sees no movement for `--still` seconds, a 15-second countdown starts (audible ticks, cancelled by any movement), then an alert with a siren.
+5. **Decisions.** A short empty-room calibration sets the WiFi threshold for each room. The radar (limited to the room's size, `--max-cm`) drives *entered / left the room*. **Alarm:** if the radar sees someone in the room and WiFi sees no movement for `--still` seconds, a countdown starts (audible ticks, cancelled by any movement), then an alert with a siren and a Telegram message to the family.
 
 Why "not getting up" instead of recognising the fall itself: on the public [WiFall](https://huggingface.co/datasets/RS2002/WiFall) dataset (10 people, ESP32-S3), seven classifiers tested on a person they never saw tell a fall from walking or jumping reasonably well (SVM: 91% of falls caught, 19% false alarms), but a fall from **sitting down** poorly (best: logistic regression with amplitude + phase, 84% caught, 35% false alarms). For WiFi both are "the body goes down quickly and stops". What separates them is whether the person moves again afterwards.
 
@@ -44,6 +44,8 @@ Measured on the prototype in one room (2 boards ~1.5 m apart, HT20, onboard PCB 
 | Radar in an empty room, factory settings | "still person" 48% of the time (a person ~10 m away behind the wall, plus noise); **0% after limiting the range to 4.5 m** |
 | "Left the room" event | reported ~15 s after the person leaves |
 | Alarm test (lie down and stay still) | countdown 30 s after the last movement, alert at 45 s, cancelled as soon as the person moved |
+| Demo run, 15 + 5 s setting: fall face down, fall backwards, passing out on a chair, collapsing on a desk, fall again | **5 of 5** alarms 20 s after the last movement, 5 of 5 cleared when the person moved; the Telegram message arrived 5–10 s after the alarm |
+| Rolling chair pushed into the room | the radar drops a still object after 12–16 s (it does not breathe), before the 20 s alarm |
 
 ![Signal variability while standing still and then walking](docs/still_vs_walking.png)
 
@@ -83,17 +85,22 @@ Radar wiring (bridge board): `VCC → VIN`, `GND → GND`, `TX → D16`, `RX →
    cd firmware/radar_bridge                   && idf.py set-target esp32 && idf.py -p COMz flash
    ```
 4. Python side: `pip install -r requirements.txt`
-5. Run the dashboard and open http://localhost:8000:
+5. Optional Telegram alerts: create a bot with @BotFather, press **Start** in it from every phone that should get alerts, and save `telegram.json` next to `dashboard.py` (it is git-ignored):
    ```
-   python dashboard.py --csi COMy --radar COMz --max-cm 450 --still 30
+   {"token": "<bot token>", "chat_ids": []}
    ```
-   Press **Calibrate empty room** and leave the room for 20 seconds. `--max-cm` = how far the room reaches from the radar, `--still` = seconds without movement before the countdown.
+   With an empty `chat_ids` the dashboard sends to everyone who pressed Start.
+6. Run the dashboard and open http://localhost:8000 (Korean + English interface):
+   ```
+   python dashboard.py --csi COMy --radar COMz --max-cm 450 --still 15 --countdown 5
+   ```
+   Press **Calibrate empty room** and leave the room for 20 seconds. `--max-cm` = how far the room reaches from the radar, `--still` = seconds without movement before the countdown, `--countdown` = seconds of warning ticks before the alert. 15 + 5 s is a demo setting; a real home needs minutes.
 
 ## Files
 
 | File | What it does |
 |---|---|
-| `dashboard.py`, `dashboard.html` | live web dashboard: WiFi motion, fingerprint, radar energy, entered/left events, "not getting up" alarm with sound; saves everything to `data/live/` |
+| `dashboard.py`, `dashboard.html` | live web dashboard (Korean + English): WiFi motion, fingerprint, radar energy, entered/left events, "not getting up" alarm with sound and Telegram message; saves everything to `data/live/` |
 | `csi.py` | reads esp-csi CSV logs, computes amplitudes and the motion measure |
 | `radar.py` | parses LD2410C report frames |
 | `radar_gates.py` | empty-room radar calibration: noise per distance gate, optional new thresholds |
@@ -106,7 +113,8 @@ Radar wiring (bridge board): `VCC → VIN`, `GND → GND`, `TX → D16`, `RX →
 
 ## Roadmap
 
-- Telegram alert to family or a caseworker.
+- Breathing: in 2 of 3 tests the radar echo behind a person lying still dropped about 3× while they held their breath; it failed when the person lay farther away, so it is not used yet.
+- Rest zones (bed, chair, toilet seat) with a longer timer, to cut false alarms from people resting.
 - Record falls, sitting down and walking in our own room with the camera; report missed falls, false alarms per hour and time to alert.
 - Use a classifier (amplitude + phase) as a hint that shortens the countdown after a likely fall.
 - Run on the ESP32 or a Raspberry Pi instead of a laptop.

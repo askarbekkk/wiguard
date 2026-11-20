@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,6 +12,8 @@
   h1 { font-size: 20px; margin: 0; }
   button { font: inherit; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); cursor: pointer; }
   #status { margin: 14px 0; padding: 22px; border-radius: 12px; color: #fff; font-size: 32px; font-weight: 700; text-align: center; transition: background .3s; }
+  #status small { display: block; font-size: 20px; font-weight: 500; opacity: .9; margin-top: 4px; }
+  .en { color: var(--muted); font-weight: 400; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
   .card h2 { font-size: 14px; margin: 0 0 4px; }
@@ -26,21 +28,40 @@
 <body>
 <main>
   <header>
-    <h1>WiGuard — live room monitor</h1>
-    <button id="calibrate">Calibrate empty room (20 s)</button>
+    <h1>WiGuard — 실시간 방 모니터 <span class="en">· live room monitor</span></h1>
+    <button id="calibrate">빈 방 보정 (20초) · Calibrate empty room</button>
   </header>
-  <div id="status" style="background:#9aa1ad">Waiting for data…</div>
+  <div id="status" style="background:#9aa1ad">데이터 대기 중…<small>Waiting for data…</small></div>
   <div class="grid">
-    <div class="card"><h2>WiFi: movement</h2><p>How much the signal changes. Dashed = threshold from calibration.</p><canvas id="motion"></canvas></div>
-    <div class="card"><h2>WiFi: fingerprint vs empty room</h2><p>How different the room looks from when it was empty. Dashed = 2× empty level.</p><canvas id="fp"></canvas></div>
-    <div class="card"><h2>Radar: energy</h2><p><span style="color:#e8590c">moving</span> / <span style="color:#1971c2">still</span> target strength (0–100)</p><canvas id="radar"></canvas></div>
-    <div class="card"><h2>Events</h2><p>Entered / left the room (radar), fall and inactivity alarms</p><ul id="events"></ul></div>
+    <div class="card"><h2>WiFi: 움직임 <span class="en">· movement</span></h2><p>신호 변화량. 점선 = 보정 기준값 · How much the signal changes. Dashed = calibrated threshold.</p><canvas id="motion"></canvas></div>
+    <div class="card"><h2>WiFi: 빈 방과의 차이 <span class="en">· fingerprint</span></h2><p>빈 방일 때와 얼마나 다른지 (참고용) · How different the room looks from when it was empty (reference only).</p><canvas id="fp"></canvas></div>
+    <div class="card"><h2>레이더: 신호 세기 <span class="en">· radar energy</span></h2><p><span style="color:#e8590c">움직임 moving</span> / <span style="color:#1971c2">정지 still</span> (0–100)</p><canvas id="radar"></canvas></div>
+    <div class="card"><h2>이벤트 <span class="en">· events</span></h2><p>입실·퇴실 (레이더), 무동작 경보 · Entered / left (radar), no-movement alarm</p><ul id="events"></ul></div>
   </div>
   <div class="facts" id="facts"></div>
 </main>
 <script>
 const WINDOW = 60;
-const RADAR_STATES = ["nobody", "moving", "still", "moving + still"];
+const RADAR_STATES = ["없음 nobody", "움직임 moving", "정지 still", "움직임+정지 moving+still"];
+const EVENTS = {
+  left: "🚪 퇴실 · left the room", entered: "🚶 입실 · entered the room",
+  "countdown: still": "⏳ 카운트다운: 움직임 없음 · countdown: no movement",
+  "countdown: no movement": "⏳ 카운트다운: 움직임 없음 · countdown: no movement",
+  "countdown: no breathing": "⏳ 카운트다운: 호흡 없음 · countdown: no breathing",
+  "ALERT: no breathing": "🚨 <b>경보: 호흡 없음 · ALERT: no breathing</b>",
+  "countdown: stuck": "⏳ 카운트다운: 바닥에서 못 일어남 · countdown: stuck on the floor",
+  "ALERT: person not moving": "🚨 <b>경보: 움직임 없음 · ALERT: person not moving</b>",
+  "ALERT: stuck on the floor": "🚨 <b>경보: 바닥에서 못 일어남 · ALERT: stuck on the floor</b>",
+  "ALERT: lost without leaving": "🚨 <b>경보: 나가지 않았는데 호흡 신호 없음 · ALERT: lost without leaving (no breathing?)</b>",
+  "ok: moving again": "✅ 해제: 다시 움직임 · ok: moving again", "ok: left the room": "✅ 해제: 퇴실 · ok: left the room",
+  "ok: seen again": "✅ 해제: 다시 감지됨 · ok: seen again",
+};
+const ALERT = {  // [Korean, English] for the big status
+  still: ["🚨 경보 — 움직임 없음, 가족에게 알림", "ALERT — person not moving, notifying family"],
+  "no breathing": ["🚨 경보 — 호흡 없음, 가족에게 알림", "ALERT — no breathing detected, notifying family"],
+  stuck: ["🚨 경보 — 바닥에서 못 일어남, 가족에게 알림", "ALERT — stuck on the floor, notifying family"],
+  lost: ["🚨 경보 — 나가지 않았는데 호흡 신호 없음", "ALERT — person did not leave but the radar lost them (no breathing?)"],
+};
 
 function chart(id, series, ymax, guide) {
   const c = document.getElementById(id), r = devicePixelRatio || 1;
@@ -65,14 +86,14 @@ function chart(id, series, ymax, guide) {
   }
 }
 
-function setStatus(text, color) {
+function setStatus(ko, en, color) {
   const el = document.getElementById("status");
-  el.textContent = text; el.style.background = color;
+  el.innerHTML = `${ko}<small>${en}</small>`; el.style.background = color;
 }
 
 async function tick() {
   let d;
-  try { d = await (await fetch("/data")).json(); } catch { return setStatus("Dashboard server stopped", "#9aa1ad"); }
+  try { d = await (await fetch("/data")).json(); } catch { return setStatus("서버 중지됨", "Dashboard server stopped", "#9aa1ad"); }
   const csi = d.csi.filter(p => d.now - p[0] < WINDOW), rad = d.radar.filter(p => d.now - p[0] < WINDOW);
   const motionMax = Math.max(0.06, (d.threshold || 0) * 3);
   chart("motion", [{ color: "#2f9e44", points: csi.map(p => [p[0], p[1]]) }], motionMax, d.threshold);
@@ -90,25 +111,29 @@ async function tick() {
   const clock = t => new Date(t * 1000).toLocaleTimeString();
   const last = d.events[d.events.length - 1];
   document.getElementById("events").innerHTML = d.events.slice().reverse()
-    .map(([t, e]) => `<li>${clock(t)} — ${{ left: "🚪 left the room", entered: "🚶 entered the room" }[e]
-      || (e.startsWith("ALERT") ? `🚨 <b>${e}</b>` : e.startsWith("countdown") ? `⏳ ${e}` : `✅ ${e}`)}</li>`).join("")
-    || "<li>No events yet</li>";
+    .map(([t, e]) => `<li>${clock(t)} — ${EVENTS[e] || e}</li>`).join("")
+    || "<li>아직 이벤트 없음 · No events yet</li>";
 
-  if (d.calibrating) setStatus("Calibrating — please leave the room", "#868e96");
-  else if (last && last[1] === "left" && present === false) setStatus(`Room empty — left at ${clock(last[0])}`, "#2f9e44");
-  else if (a.state === "alert") setStatus("ALERT — person not moving, notifying family", "#c92a2a");
-  else if (a.state === "countdown") setStatus(`No movement — alert in ${Math.max(0, Math.ceil(a.until - d.now))} s (move to cancel)`, "#e03131");
-  else if (!c && !r) setStatus("No data from the boards", "#9aa1ad");
-  else if (csiMoving) setStatus("Movement", "#e8590c");
-  else if (present) setStatus("Person present, not moving", "#1971c2");
-  else if (present === false) setStatus("Room empty", "#2f9e44");
-  else setStatus("Quiet", "#2f9e44");
+  const n = Math.max(0, Math.ceil((a.until || 0) - d.now));
+  if (d.calibrating) setStatus("보정 중 — 방에서 나가 주세요", "Calibrating — please leave the room", "#868e96");
+  else if (a.state === "alert") setStatus(...(ALERT[a.reason] || ALERT.still), "#c92a2a");
+  else if (a.state === "countdown" && a.reason === "stuck") setStatus(`바닥에서 못 일어남 — ${n}초 후 경보 (걸으면 취소)`, `Stuck on the floor — alert in ${n} s (walk to cancel)`, "#e03131");
+  else if (a.state === "countdown") setStatus(`움직임 없음 — ${n}초 후 경보 (움직이면 취소)`, `No movement — alert in ${n} s (move to cancel)`, "#e03131");
+  else if (last && last[1] === "left" && present === false) setStatus(`빈 방 — ${clock(last[0])} 퇴실`, `Room empty — left at ${clock(last[0])}`, "#2f9e44");
+  else if (!c && !r) setStatus("보드 데이터 없음", "No data from the boards", "#9aa1ad");
+  else if (present === false) setStatus("빈 방", "Room empty", "#2f9e44");  // WiFi motion with nobody here = people outside
+  else if (csiMoving) setStatus("움직임 감지", "Movement", "#e8590c");
+  else if (present && d.in_rest) setStatus("휴식 중 (휴식 구역)", "Resting (rest zone)", "#1971c2");
+  else if (present) setStatus("사람 있음, 움직임 없음", "Person present, not moving", "#1971c2");
+  else if (present === false) setStatus("빈 방", "Room empty", "#2f9e44");
+  else setStatus("조용함", "Quiet", "#2f9e44");
 
   document.getElementById("facts").innerHTML = [
-    c ? `WiFi motion <b>${c[1].toFixed(3)}</b>` : "WiFi: no data",
-    d.threshold ? `threshold <b>${d.threshold.toFixed(3)}</b>` : "not calibrated",
-    c && c[2] != null ? `fingerprint <b>${c[2].toFixed(1)}</b>` : "",
-    r ? `radar <b>${RADAR_STATES[r[1]] ?? r[1]}</b>, moving ${r[2]} cm, still ${r[4]} cm` : "radar: no data",
+    c ? `WiFi 움직임 motion <b>${c[1].toFixed(3)}</b>` : "WiFi: 데이터 없음 no data",
+    d.threshold ? `기준값 threshold <b>${d.threshold.toFixed(3)}</b>` : "보정 안 됨 not calibrated",
+    c && c[2] != null ? `빈 방 차이 fingerprint <b>${c[2].toFixed(1)}</b>` : "",
+    r ? `레이더 radar <b>${RADAR_STATES[r[1]] ?? r[1]}</b>, ${r[2]} / ${r[4]} cm` : "레이더: 데이터 없음 radar: no data",
+    d.person_cm != null ? `위치 position <b>${d.person_cm} cm</b>${d.in_rest ? " · 휴식 구역 rest zone" : ""}` : "",
   ].filter(Boolean).map(s => `<span>${s}</span>`).join("");
 }
 

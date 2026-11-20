@@ -11,6 +11,8 @@ import time
 import wave
 import winsound
 from collections import deque
+from urllib.parse import urlencode
+from urllib.request import urlopen
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
@@ -77,6 +79,26 @@ def sound(kind):
     threading.Thread(target=play, daemon=True).start()
 
 
+def telegram(text):
+    """Send `text` to everyone who pressed Start in the bot. telegram.json = {"token": ..., "chat_ids": [...]}, not in git."""
+    try:
+        with open("telegram.json") as f:
+            cfg = json.load(f)
+    except OSError:
+        return
+
+    def send():
+        api = f"https://api.telegram.org/bot{cfg['token']}/"
+        try:
+            ids = cfg.get("chat_ids") or {u["message"]["chat"]["id"] for u in
+                                          json.load(urlopen(api + "getUpdates", timeout=40))["result"] if "message" in u}
+            for chat in ids:
+                urlopen(api + "sendMessage", urlencode({"chat_id": chat, "text": text}).encode(), timeout=40)
+        except OSError as e:  # no internet: the siren in the room still works
+            print("telegram failed:", e, flush=True)
+    threading.Thread(target=send, daemon=True).start()
+
+
 def log_event(now, event):  # caller holds the lock
     event_log.write(f"{now:.3f},{event}\n")
     events.append((now, event))
@@ -90,6 +112,8 @@ def check_alarm(now, motion):  # caller holds the lock
         alarm["last_move"] = now
     if not room["occupied"] or now - alarm["last_move"] < STILL_LIMIT:
         if alarm["state"]:
+            if alarm["state"] == "alert":
+                telegram(f"✅ WiGuard {time.strftime('%H:%M')} — 해제: 다시 움직임 / OK: the person is moving again")
             log_event(now, "ok: moving again" if room["occupied"] else "ok: left the room")
             alarm["state"] = None
             sound("ok")
@@ -102,6 +126,8 @@ def check_alarm(now, motion):  # caller holds the lock
         alarm["state"] = "alert"
         log_event(now, "ALERT: person not moving")
         sound("alert")
+        telegram(f"🚨 WiGuard {time.strftime('%H:%M')} — 경보: 방에 사람이 있는데 {STILL_LIMIT}초 넘게 움직임이 없습니다. "
+                 f"확인해 주세요.\nALERT: someone is in the room and has not moved for over {STILL_LIMIT} s. Please check on them.")
 
 
 def read_csi(port):
@@ -177,7 +203,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.dumps({"now": time.time(), "csi": list(csi_points), "radar": list(radar_points),
                                    "events": list(events), "calibrating": time.time() < calib["until"],
                                    "threshold": calib["threshold"], "fp_base": calib["fp_base"],
-                                   "alarm": {k: alarm[k] for k in ("state", "until")}}).encode()
+                                   "alarm": {k: alarm.get(k) for k in ("state", "until")}}).encode()
             self.send(body, "application/json")
         else:
             with open("dashboard.html", "rb") as f:
@@ -204,8 +230,9 @@ if __name__ == "__main__":
     p.add_argument("--radar")
     p.add_argument("--max-cm", type=int, default=MAX_CM, help="ignore radar targets farther than this")
     p.add_argument("--still", type=int, default=STILL_LIMIT, help="seconds without movement before the countdown")
+    p.add_argument("--countdown", type=int, default=COUNTDOWN, help="seconds of warning ticks before the alert")
     args = p.parse_args()
-    MAX_CM, STILL_LIMIT = args.max_cm, args.still
+    MAX_CM, STILL_LIMIT, COUNTDOWN = args.max_cm, args.still, args.countdown
     if args.csi:
         threading.Thread(target=read_csi, args=(args.csi,), daemon=True).start()
     if args.radar:
